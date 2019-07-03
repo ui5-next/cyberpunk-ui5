@@ -1,8 +1,12 @@
 # Cyberpunk UI5
 
-Cyberpunk UI5 Project, write UI5 application in a cyberpunk way.
+[![Netlify Status](https://api.netlify.com/api/v1/badges/393d02f2-6433-465f-8850-055b8da9d60d/deploy-status)](https://zealous-einstein-4e192b.netlify.com/)
 
-## Quick Start
+Cyberpunk UI5 demo project, write UI5 application in a cyberpunk way.
+
+## Quick View
+
+Just use react/redux in UI5 project as you want.
 
 ```jsx
 // you must import React for react create function
@@ -25,4 +29,13 @@ const app: App = <App
 />;
 
 app.placeAt("content");
+```
+
+## Quick Start
+
+Clone this repository and just run:
+
+```bash
+npm install
+npm start
 ```
