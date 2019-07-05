@@ -10,8 +10,7 @@ const app: App = <App
   pages={
     <Page title="cyber punk ui5" >
       <ReactControl store={store}>
-        <p>Hello World, This is a React paragraph</p>
-        <SimpleNote simpleNote="Note From Props" />
+        <SimpleNote note="Note From Props" />
       </ReactControl>
     </Page>
   }

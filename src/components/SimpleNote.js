@@ -2,12 +2,11 @@
 
 import React, { Component } from 'react';
 
-
 class SimpleNote extends Component {
   render() {
     return (
       <div>
-        <p>{this.props.simpleNote}</p>
+        <p>{this.props.note}</p>
       </div>
     );
   }
