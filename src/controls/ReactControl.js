@@ -62,7 +62,9 @@ export default class ReactControl extends Control {
 
     if(store){
       ReactDOM.render(
-        <Provider store={store}>{this.getContent()}</Provider>,
+        <Provider store={store} >
+          {this.getContent()}
+        </Provider>,
         this._innerDomRef
       );
     } else {

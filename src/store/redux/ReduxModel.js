@@ -1,16 +1,19 @@
 import ClientModel from "sap/ui/model/ClientModel";
-import { cloneDeep } from "lodash";
 import { createStore, applyMiddleware, compose } from "redux";
 import ReduxPropertyBinding from "./ReduxPropertyBinding";
 import Context from "sap/ui/model/Context";
 import ReduxListBinding from "./ReduxListBinding";
-import ReduxTreeBinding from './ReduxTreeBinding';
-import { get, filter, trimStart, trimEnd } from "lodash";
-import ReduxThunk from 'redux-thunk';
+import ReduxTreeBinding from "./ReduxTreeBinding";
+import ReduxThunk from "redux-thunk";
+import cloneDeep from "lodash/cloneDeep";
+
+import { get } from "./Util";
 
 const CONST_SET_PROPERTY = "Internal.SetProperty";
 
 const composeEnhancer = window.__REDUX_DEVTOOLS_EXTENSION_COMPOSE__ || compose;
+
+const DEFAULT_MODEL_LIST_MAX_SIZE = Number.MAX_SAFE_INTEGER || 100000000;
 
 export interface ActionData {
   /**
@@ -25,49 +28,46 @@ export interface ActionData {
 
 export type ThunkAction<T> = (dispatch: (action: ActionData | ThunkAction) => void, getState: () => T) => Promise<void>;
 
-export interface Reducer<T> {
-  /**
-   * action type
-   */
-  type: string,
-  /**
-   * consume action data and return new state
-   */
-  perform: (actionData: ActionData, state: T) => T
-}
 
 export default class ReduxModel<T> extends ClientModel {
 
   metadata = {
-    publicMethods: ["registerReducer", "dispatch"]
+    publicMethods: ["addReducer", "dispatch", "dispatchAction"]
   }
 
+  /**
+   * Redux Model, provide transparent redux binding for UI5
+   *
+   * @param {any} initializeState The init state of application
+   */
   constructor(initializeState: T = {}) {
 
     super();
+
+    this.setSizeLimit(DEFAULT_MODEL_LIST_MAX_SIZE);
+
+    this._initStore(initializeState);
+
+  }
+
+  _initStore(initState: T) {
 
     this.reducers = {
 
       [CONST_SET_PROPERTY]: {
         type: CONST_SET_PROPERTY,
-        perform: ({ param: { sPath = "", oValue } }, oState) => {
-          sPath = trimStart(trimEnd(sPath, "}"), "{");
-          const aParts = filter(sPath.split("/"));
-          const sProperty = aParts.pop();
-          const oUpdateBase = get(oState, aParts) || {};
-          oUpdateBase[sProperty] = oValue;
-          return oState;
-        }
+        perform: this._setPropertyReducer
       }
 
     };
 
     this._store = createStore(
       // reducer
-      (oState = initializeState, oActionData) => {
-        const reducer: Reducer = this.reducers[oActionData.type];
+      (oState = initState, oActionData: ActionData) => {
+        const reducer = this.reducers[oActionData.type];
         if (reducer) {
-          return reducer.perform(oActionData, cloneDeep(oState)) || oState;
+          const tmpState = cloneDeep(oState);
+          return reducer.perform(tmpState, oActionData.param) || tmpState;
         } else {
           return oState;
         }
@@ -76,6 +76,7 @@ export default class ReduxModel<T> extends ClientModel {
       composeEnhancer(applyMiddleware(ReduxThunk))
     );
 
+
     this._store.subscribe(() => {
       // once any data updated, perform check
       this.checkUpdate();
@@ -83,32 +84,67 @@ export default class ReduxModel<T> extends ClientModel {
 
   }
 
-  /**
- * Register new reducer to global store
- *
- * with function instead of transitional way just for single way dependency
- *
- * and more dynamic provided
- *
-* @param {Reducer} reducer
-* @param {boolean} bForce
-  */
-  registerReducer(reducer: Reducer<T>, bForce = false) {
+  _setPropertyReducer(oState, { sPath = "", oValue, oContext }) {
 
-    if (!this.reducers[reducer.type] || bForce) {
-      this.reducers[reducer.type] = reducer;
-    } else {
-      throw new Error(`reducer for action ${reducer.type} has been registered`);
+    // maybe need update with general way
+
+    if (sPath.startsWith("{") || sPath.endsWith("}")) {
+      throw new Error(`Application data binding error: for ${sPath}, user do not need use {} to wrap the path.`);
     }
 
+    if (oContext) {
+
+      var aPath = oContext.getPath().split("/").filter(v => v).concat(sPath.split("/").filter(v => v));
+      // with context, need combine the context path and the input sPath
+      var sProperty = aPath.pop();
+
+      const oUpdateBase = get(oState, aPath) || {};
+
+      oUpdateBase[sProperty] = oValue;
+
+    } else {
+
+      const aParts = (sPath.split("/")).filter(v => v);
+      const sProperty = aParts.pop();
+
+      // fix root object reference
+      if (aParts > 0) {
+        const oUpdateBase = get(oState, aParts) || {};
+        oUpdateBase[sProperty] = oValue;
+      } else {
+        oState[sProperty] = oValue;
+      }
+    }
+
+    return oState;
   }
 
-  getStore() {
-    return this._store;
+  /**
+   * addReducer function
+   *
+   * register new reducer to global store
+   *
+   * with function instead of transitional way just for single way dependency
+   *
+   * and more dynamic provided
+   * @param {string} type reducer response action type
+   * @param {function} perform logic
+   * @param {boolean} bForce overwrite or not
+   */
+  addReducer(type: String, perform: (oState: T, oParam: any) => T, bForce: Boolean = false) {
+
+    if (!this.reducers[type] || bForce) {
+      this.reducers[type] = { type, perform };
+    } else {
+      throw new Error(`reducer for action ${type} has been registered`);
+    }
+
+    return (oParam) => this.dispatchAction(type, oParam);
+
   }
 
   setProperty(sPath, oValue, oContext, bAsyncUpdate) {
-    this.dispatch({ type: CONST_SET_PROPERTY, param: { sPath, oValue } });
+    this.dispatchAction(CONST_SET_PROPERTY, { sPath, oValue, oContext });
     return true;
   }
 
@@ -127,13 +163,13 @@ export default class ReduxModel<T> extends ClientModel {
       return oNode;
     }
 
-    var oState = cloneDeep(this._store.getState());
+    var oState = { ...this._store.getState() }; // clone
     var iIndex = 0;
-    var aParts = sPath.split('/');
+    var aParts = sPath.split("/");
 
     if (!aParts[0]) {
       // absolute path starting with slash
-      if (aParts[1] === 'selector') {
+      if (aParts[1] === "selector") {
         oNode = this.oSelectors[aParts[2]](oState, oContext);
         iIndex = 3;
       } else {
@@ -145,7 +181,7 @@ export default class ReduxModel<T> extends ClientModel {
     while (oNode && aParts[iIndex]) {
       var sPart = aParts[iIndex];
       var oTmpNode = oNode[sPart];
-      if (typeof oTmpNode === 'function') {
+      if (typeof oTmpNode === "function") {
         oNode = oTmpNode(oState, oContext);
       } else {
         oNode = oTmpNode;
@@ -156,8 +192,33 @@ export default class ReduxModel<T> extends ClientModel {
     return oNode;
   }
 
-  dispatch(...params) {
-    this._store.dispatch(...params);
+  /**
+   * dispatch redux action
+   *
+   * @param {ActionData} oAction
+   */
+  dispatch(oAction: ActionData | ThunkAction<T>) {
+    this._store.dispatch(oAction);
+  }
+
+  /**
+   * dispatch action event
+   * @param {string} type
+   * @param {any} param
+   */
+  dispatchAction(type: String, param: any) {
+    this.dispatch({ type, param });
+  }
+
+  getStore(): ReduxModel {
+    return this._store;
+  }
+
+  /**
+   * dispatch thunk action
+   */
+  dispatchFunction(thunk: ThunkAction<T>) {
+    this.dispatch(thunk);
   }
 
   bindProperty(sPath, oContext, mParameters) {
@@ -173,4 +234,3 @@ export default class ReduxModel<T> extends ClientModel {
   }
 
 }
-
